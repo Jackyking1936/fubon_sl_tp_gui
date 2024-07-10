@@ -84,7 +84,6 @@ class LoginForm(QWidget):
                 self.lineEdit_cert_pwd.setText(user_info_dict['cert_pwd'])
                 self.lineEdit_acc.setText(user_info_dict['target_account'])
 
-
     def showDialog(self):
         # Open the file dialog to select a file
         file_path, _ = QFileDialog.getOpenFileName(self, '請選擇您的憑證檔案', 'C:\\', 'All Files (*)')
@@ -244,9 +243,6 @@ class MainApp(QWidget):
         # self.stop_loss_dict = {}
         # self.take_profit_dict = {}
         
-        
-
-
     # 視窗啟動時撈取對應帳號的inventories和unrealized_pnl初始化表格
     def table_init(self):
         inv_res = sdk.accounting.inventories(active_account)
