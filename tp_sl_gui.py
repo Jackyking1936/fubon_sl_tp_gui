@@ -156,6 +156,8 @@ class Communicate(QObject):
     # 定義一個帶參數的信號
     print_log_signal = Signal(str)
     item_update_signal = Signal(int, int, str)
+    add_new_inv_signal = Signal(str, int, float)
+    del_row_signal = Signal(int)
 
 class MainApp(QWidget):
     def __init__(self):
@@ -249,11 +251,15 @@ class MainApp(QWidget):
         self.button_stop.clicked.connect(self.on_button_stop_clicked)
         self.tablewidget.itemClicked[QTableWidgetItem].connect(self.onItemClicked)
         self.button_fake_websocket.clicked.connect(self.fake_ws_data)
+        self.button_fake_buy_filled.clicked.connect(self.fake_buy_filled)
+        self.button_fake_sell_filled.clicked.connect(self.fake_sell_filled)
 
         # communicator init and slot function connect
         self.communicator = Communicate()
         self.communicator.print_log_signal.connect(self.print_log)
         self.communicator.item_update_signal.connect(self.item_update)
+        self.communicator.add_new_inv_signal.connect(self.add_new_inv)
+        self.communicator.del_row_signal.connect(self.del_table_row)
         
         # 初始化庫存表資訊
         self.default_sl_percent = float(self.lineEdit_default_sl.text())
@@ -276,6 +282,94 @@ class MainApp(QWidget):
         # 模擬用變數
         self.fake_price_cnt = 0
     
+    # 當有庫存歸零時刪除該列的slot function
+    def del_table_row(self, row_idx):
+        self.tablewidget.removeRow(row_idx)
+        
+        for key, value in self.row_idx_map.items():
+            if value > row_idx:
+                self.row_idx_map[key] = value-1
+            elif value == row_idx:
+                pop_idx = key
+        self.row_idx_map.pop(pop_idx)
+        print("pop inventory finish")
+
+    # 當有成交有不在現有庫存的現股股票時新增至現有表格最下方
+    def add_new_inv(self, symbol, qty, price):
+        row = self.tablewidget.rowCount()
+        self.tablewidget.insertRow(row)
+        
+        for j in range(len(self.table_header)):
+            if self.table_header[j] == '股票名稱':
+                item = QTableWidgetItem(self.tickers_name[symbol])
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '股票代號':
+                item = QTableWidgetItem(symbol)
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '類別':
+                item = QTableWidgetItem("Stock")
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '庫存股數':
+                item = QTableWidgetItem(str(qty))
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '庫存均價':
+                item = QTableWidgetItem(str(round(price+self.epsilon, 2)))
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '現價':
+                item = QTableWidgetItem(str(round(price+self.epsilon, 2)))
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '停損':
+                item = QTableWidgetItem()
+                item.setFlags(Qt.ItemIsSelectable & ~Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+                new_sl_price = round(price*(1+self.default_sl_percent)+self.epsilon, 2)
+                item.setText(str(new_sl_price))
+                self.stop_loss_dict[symbol] = new_sl_price
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '停利':
+                item = QTableWidgetItem()
+                item.setFlags(Qt.ItemIsSelectable & ~Qt.ItemIsEditable | Qt.ItemIsEnabled|Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+                new_tp_price = round(price*(1+self.default_tp_percent)+self.epsilon, 2)
+                item.setText(str(new_tp_price))
+                self.take_profit_dict[symbol] = new_tp_price
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '損益試算':
+                cur_upnl = 0
+                item = QTableWidgetItem(str(cur_upnl))
+                self.tablewidget.setItem(row, j, item)
+            elif self.table_header[j] == '獲利率%':
+                return_rate = 0
+                item = QTableWidgetItem(str(round(return_rate+self.epsilon, 2))+'%')
+                self.tablewidget.setItem(row, j, item)
+
+        self.row_idx_map[symbol] = row
+        self.wsstock.subscribe({
+            'channel': 'trades',
+            'symbol': symbol
+        })
+
+    # 測試用假裝有賣出成交的按鈕slot function
+    def fake_sell_filled(self):
+        new_fake_sell = fake_filled_data()
+        new_fake_sell.stock_no = "00900"
+        new_fake_sell.buy_sell = BSAction.Sell
+        new_fake_sell.filled_qty = 1000
+        new_fake_sell.filled_price = 14
+        new_fake_sell.account = active_account.account
+        new_fake_sell.user_def = "inv_TP"
+        self.on_filled(None, new_fake_sell)
+
+    # 測試用假裝有買入成交的按鈕slot function
+    def fake_buy_filled(self):
+        new_fake_buy = fake_filled_data()
+        new_fake_buy.stock_no = "00940"
+        new_fake_buy.buy_sell = BSAction.Buy
+        new_fake_buy.filled_qty = 2000
+        new_fake_buy.filled_price = 17
+        new_fake_buy.account = active_account.account
+        self.on_filled(None, new_fake_buy)
+
     # 主動回報，接入成交回報後判斷 row_idx_map 要如何更新，sl 及 tp 監控列表及庫存列表是否需pop，訂閱是否加退訂
     def on_filled(self, err, content):
         print(content, content.stock_no)
@@ -283,7 +377,7 @@ class MainApp(QWidget):
             self.mutex.lock()
             if content.order_type == OrderType.Stock and content.filled_qty >= 1000:
                 if content.buy_sell == BSAction.Buy:
-                    print("buy:", self.inventories)
+                    # print("buy:", self.inventories)
                     if (content.stock_no, str(content.order_type)) in self.inventories:
                         print("already in inventories", self.row_idx_map)
                         
@@ -349,7 +443,7 @@ class MainApp(QWidget):
                             if content.stock_no in self.take_profit_dict:
                                 self.take_profit_dict.pop(content.stock_no)
                             if content.stock_no in self.subscribed_ids:
-                                self.stock.unsubscribe({
+                                self.wsstock.unsubscribe({
                                     'id':self.subscribed_ids[content.stock_no]
                                 })
                             
@@ -399,6 +493,9 @@ class MainApp(QWidget):
             if item.column() == self.col_idx_map['停損']:
                 symbol = self.tablewidget.item(item.row(), self.col_idx_map['股票代號']).text()
                 item_str = item.text()
+                if symbol in self.stop_loss_dict:
+                    return
+                
                 try:
                     item_price = float(item_str)
                 except Exception as e:
@@ -423,6 +520,10 @@ class MainApp(QWidget):
             elif item.column() == self.col_idx_map['停利']:
                 symbol = self.tablewidget.item(item.row(), self.col_idx_map['股票代號']).text()
                 item_str = item.text()
+
+                if symbol in self.take_profit_dict:
+                    return
+
                 try:
                     item_price = float(item_str)
                 except Exception as e:
@@ -658,7 +759,7 @@ class MainApp(QWidget):
 
     def on_button_start_clicked(self):
         try:
-            self.default_sl_percent = float(self.lineEdit_default_sl.text())
+            self.default_sl_percent = float(self.lineEdit_default_sl.text())*0.01
             if self.default_sl_percent > 0:
                 self.print_log("請輸入正確的監控停損(%), 範圍需小於0, 0為不預設")
                 return
@@ -671,7 +772,7 @@ class MainApp(QWidget):
             return
         
         try:
-            self.default_tp_percent = float(self.lineEdit_default_tp.text())
+            self.default_tp_percent = float(self.lineEdit_default_tp.text())*0.01
             if self.default_tp_percent < 0:
                 self.print_log("請輸入正確的監控停利(%), 範圍需大於0, 0為不預設")
                 return
@@ -688,6 +789,8 @@ class MainApp(QWidget):
         self.lineEdit_default_tp.setReadOnly(True)
         self.button_start.setVisible(False)
         self.button_stop.setVisible(True)
+        self.tablewidget.clearContents()
+        self.tablewidget.setRowCount(0)
 
         self.print_log("建立WebSocket行情連線")
         sdk.init_realtime()
@@ -709,22 +812,27 @@ class MainApp(QWidget):
         self.button_start.setVisible(True)
 
         self.wsstock.disconnect()
+        try:
+            if self.fake_ws_timer.is_alive():
+                self.fake_ws_timer.cancel()
+                self.fake_price_cnt+=1
+        except AttributeError:
+            print("no fake ws timer exist")
 
     def tickers_name_init(self):
-        self.tickers_res = self.reststock.intraday.tickers(type='EQUITY', exchange="TWSE")
+        self.tickers_res = self.reststock.snapshot.quotes(market='TSE')
         for item in self.tickers_res['data']:
             if 'name' in item:
                 self.tickers_name.update({item['symbol']: item['name']})
             else:
                 self.tickers_name.update({item['symbol']: ''})
 
-        self.tickers_res = self.reststock.intraday.tickers(type='EQUITY', exchange="TPEx")
+        self.tickers_res = self.reststock.snapshot.quotes(market='OTC')
         for item in self.tickers_res['data']:
             if 'name' in item:
                 self.tickers_name.update({item['symbol']: item['name']})
             else:
                 self.tickers_name.update({item['symbol']: ''})
-        print(len(self.tickers_name))
 
     # 更新最新log到QPlainTextEdit的slot function
     def print_log(self, log_info):
