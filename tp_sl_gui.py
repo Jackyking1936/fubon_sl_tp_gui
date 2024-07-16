@@ -803,6 +803,7 @@ class MainApp(QWidget):
 
         self.print_log("抓取庫存...")
         self.table_init()
+        sdk.set_on_filled(self.on_filled)
 
     def on_button_stop_clicked(self):
         self.print_log("停止執行監控")
