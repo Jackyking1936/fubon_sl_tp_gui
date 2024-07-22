@@ -372,20 +372,17 @@ class MainApp(QWidget):
 
     # 測試用假裝有買入成交的按鈕slot function
     def fake_buy_filled(self):
-        stock_list = ['2330', '2881', '2454', '00940', '1101', '6598', '2509', '3230', '4903', '6661']
-        for stock_no in stock_list:
-            new_fake_buy = fake_filled_data()
-            new_fake_buy.stock_no = stock_no
-            new_fake_buy.buy_sell = BSAction.Buy
-            new_fake_buy.filled_qty = 2000
-            new_fake_buy.filled_price = 17
-            new_fake_buy.account = active_account.account
-            self.on_filled(None, new_fake_buy)
+        new_fake_buy = fake_filled_data()
+        new_fake_buy.stock_no = "00940"
+        new_fake_buy.buy_sell = BSAction.Buy
+        new_fake_buy.filled_qty = 2000
+        new_fake_buy.filled_price = 17
+        new_fake_buy.account = active_account.account
+        self.on_filled(None, new_fake_buy)
 
     # 主動回報，接入成交回報後判斷 row_idx_map 要如何更新，sl 及 tp 監控列表及庫存列表是否需pop，訂閱是否加退訂
     def on_filled(self, err, content):
-        print('filled recived:', content.stock_no)
-        print('content:', content)
+        print(content, content.stock_no)
         if content.account == active_account.account:
             self.mutex.lock()
             if content.order_type == OrderType.Stock and content.filled_qty >= 1000:
@@ -596,7 +593,7 @@ class MainApp(QWidget):
         msg = json.loads(message)
         event = msg["event"]
         data = msg["data"]
-        # print(event, data)
+        print(event, data)
         
         # subscribed事件處理
         if event == "subscribed":
@@ -614,32 +611,25 @@ class MainApp(QWidget):
             self.communicator.print_log_signal.emit(remove_key+"...成功移除訂閱")
 
         elif event == "snapshot":
-            self.mutex.lock()
             print(event, data)
 
             if 'price' not in data:
                 data['price'] = '-'
 
             self.communicator.item_update_signal.emit(self.row_idx_map[data['symbol']], self.col_idx_map['現價'], str(data['price']))
-            self.mutex.unlock()
-            
+
         # data事件處理
         elif event == "data":
             if 'isTrial' in data:
                 if data['isTrial']:
                     return
-            
             self.mutex.lock()
             symbol = data["symbol"]
-            
-            if symbol not in self.row_idx_map:
-                return
-            
             if 'price' in data:
                 cur_price = data["price"]
             else:
                 cur_price = '-'
-                     
+            
             self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['現價'], str(cur_price))
         
             avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
@@ -653,6 +643,8 @@ class MainApp(QWidget):
         
             return_rate = cur_pnl/(float(avg_price)*float(share))*100
             self.communicator.item_update_signal.emit(self.row_idx_map[symbol], self.col_idx_map['獲利率%'], str(round(return_rate+self.epsilon, 2))+'%')
+        
+            self.mutex.unlock()
             
             if symbol in self.stop_loss_dict:
                 if cur_price <= self.stop_loss_dict[symbol] and symbol not in self.is_ordered:
@@ -678,8 +670,7 @@ class MainApp(QWidget):
                         self.communicator.print_log_signal.emit(tp_res.message)
                 elif symbol in self.is_ordered:
                     self.communicator.print_log_signal.emit(symbol+"...停利市價單已發送過...")
-            self.mutex.unlock()
-            
+    
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
     
