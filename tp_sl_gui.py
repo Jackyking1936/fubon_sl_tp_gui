@@ -860,9 +860,9 @@ class MainApp(QWidget):
 
 try:
     sdk = FubonSDK()
-except ValueError:
-    raise ValueError("請確認網路連線")
-active_account = None
+except ValueError as e:
+    print('請確認網路連線')
+    raise e
  
 if not QApplication.instance():
     app = QApplication(sys.argv)
